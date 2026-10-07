@@ -4,75 +4,181 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Análisis de imágenes con AWS Rekognition</title>
+  <link rel="stylesheet" href="estilos.css">
 </head>
 <body>
-  <h1>Analizando archivos con AWS</h1>
+  <main class="app">
+    <header class="app-header">
+      <h1>Análisis de imágenes</h1>
+      <p>Detección de etiquetas con AWS Rekognition</p>
+    </header>
 
-  <form id="uploadForm">
-    <div>
-      <label for="imagen">Seleccione imagen</label>
-      <input type="file" name="imagen" id="imagen" accept="image/*" required>
-    </div>
-    <button type="submit">Enviar</button>
-  </form>
+    <section class="app-body">
+      <form id="uploadForm">
+        <label class="dropzone" id="dropzone" for="imagen">
+          <span class="icono" aria-hidden="true">🖼️</span>
+          <span class="titulo" id="nombreArchivo">Haga clic o arrastre una imagen aquí</span>
+          <span class="ayuda">JPG o PNG</span>
+          <input type="file" name="imagen" id="imagen" accept="image/*" required>
+        </label>
 
-  <div>
-    <h3>Resultados del análisis</h3>
-    <ul id="listaEtiquetas"></ul>
-  </div>
+        <img id="vistaPrevia" alt="Vista previa de la imagen seleccionada">
+
+        <button type="submit" class="btn" id="btnEnviar">Analizar imagen</button>
+      </form>
+
+      <div class="resultados">
+        <h2>Resultados del análisis</h2>
+        <div class="estado" id="estado" role="status" aria-live="polite"></div>
+        <ul class="lista" id="listaEtiquetas"></ul>
+      </div>
+    </section>
+  </main>
 
   <script>
     const form = document.getElementById('uploadForm')
+    const inputImagen = document.getElementById('imagen')
+    const dropzone = document.getElementById('dropzone')
+    const nombreArchivo = document.getElementById('nombreArchivo')
+    const vistaPrevia = document.getElementById('vistaPrevia')
+    const btnEnviar = document.getElementById('btnEnviar')
+    const estado = document.getElementById('estado')
     const listaEtiquetas = document.getElementById('listaEtiquetas')
 
-    // Agrega un <li> con texto plano a la lista
-    function agregarItem(texto) {
-      const li = document.createElement('li')
-      li.textContent = texto
-      listaEtiquetas.appendChild(li)
+    const TEXTO_INICIAL = 'Haga clic o arrastre una imagen aquí'
+    let urlPrevia = null
+
+    // Muestra un mensaje de estado (con spinner opcional)
+    function mostrarEstado(texto, { cargando = false, error = false } = {}) {
+      estado.className = error ? 'estado error' : 'estado'
+      estado.textContent = ''
+      if (cargando) {
+        const spinner = document.createElement('span')
+        spinner.className = 'spinner'
+        estado.appendChild(spinner)
+      }
+      const span = document.createElement('span')
+      span.textContent = texto
+      estado.appendChild(span)
     }
+
+    // Color de la barra según el nivel de confianza
+    function colorConfianza(valor) {
+      if (valor >= 90) return 'var(--ok)'
+      if (valor >= 80) return 'var(--warn)'
+      return 'var(--error)'
+    }
+
+    // Crea un <li> con nombre, porcentaje y barra
+    function agregarEtiqueta(label) {
+      const confianza = Number(label.Confidence)
+
+      const li = document.createElement('li')
+      li.className = 'etiqueta'
+
+      const fila = document.createElement('div')
+      fila.className = 'etiqueta-fila'
+
+      const nombre = document.createElement('span')
+      nombre.className = 'etiqueta-nombre'
+      nombre.textContent = label.Name
+
+      const valor = document.createElement('span')
+      valor.className = 'etiqueta-valor'
+      valor.textContent = `${confianza.toFixed(2)}%`
+
+      fila.append(nombre, valor)
+
+      const barra = document.createElement('div')
+      barra.className = 'barra'
+      const relleno = document.createElement('div')
+      relleno.className = 'barra-relleno'
+      relleno.style.background = colorConfianza(confianza)
+      relleno.style.width = '0%'
+      barra.appendChild(relleno)
+
+      li.append(fila, barra)
+      listaEtiquetas.appendChild(li)
+
+      // Anima el ancho en el siguiente cuadro
+      requestAnimationFrame(() => { relleno.style.width = `${confianza}%` })
+    }
+
+    // Vista previa y nombre del archivo elegido
+    function actualizarArchivo(archivo) {
+      if (urlPrevia) URL.revokeObjectURL(urlPrevia)
+
+      if (!archivo) {
+        nombreArchivo.textContent = TEXTO_INICIAL
+        vistaPrevia.style.display = 'none'
+        return
+      }
+
+      urlPrevia = URL.createObjectURL(archivo)
+      vistaPrevia.src = urlPrevia
+      vistaPrevia.style.display = 'block'
+      nombreArchivo.textContent = archivo.name
+    }
+
+    inputImagen.addEventListener('change', () => {
+      actualizarArchivo(inputImagen.files[0])
+    })
+
+    // Arrastrar y soltar
+    ;['dragenter', 'dragover'].forEach((evento) => {
+      dropzone.addEventListener(evento, (e) => {
+        e.preventDefault()
+        dropzone.classList.add('arrastrando')
+      })
+    })
+    ;['dragleave', 'drop'].forEach((evento) => {
+      dropzone.addEventListener(evento, (e) => {
+        e.preventDefault()
+        dropzone.classList.remove('arrastrando')
+      })
+    })
+    dropzone.addEventListener('drop', (e) => {
+      const archivo = e.dataTransfer.files[0]
+      if (archivo && archivo.type.startsWith('image/')) {
+        inputImagen.files = e.dataTransfer.files
+        actualizarArchivo(archivo)
+      }
+    })
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault() // Detenemos el envío normal del formulario
 
-      // FormData = contenedor de datos del formulario
       const formData = new FormData(form)
 
       listaEtiquetas.innerHTML = ''
-      agregarItem('Analizando imagen con AWS...')
+      btnEnviar.disabled = true
+      mostrarEstado('Analizando imagen con AWS...', { cargando: true })
 
-      // Enviar los datos por el API
       try {
         const response = await fetch('/api/analizar', {
           method: 'POST',
           body: formData
         })
 
-        // El servicio AWS devuelve la resolución
         const data = await response.json()
-
-        listaEtiquetas.innerHTML = ''
 
         if (data.success) {
           if (data.labels.length === 0) {
-            agregarItem('No se detectaron etiquetas con la confianza mínima.')
+            mostrarEstado('No se detectaron etiquetas con la confianza mínima.')
             return
           }
-
-          data.labels.forEach((label) => {
-            agregarItem(`Etiqueta: ${label.Name} - confianza: ${label.Confidence.toFixed(2)}%`)
-          })
+          mostrarEstado(`Se detectaron ${data.labels.length} etiquetas.`)
+          data.labels.forEach(agregarEtiqueta)
         } else {
-          // Cuidado: en producción no se deben exponer todos los errores.
-          // El detalle técnico se registra en el servidor.
-          agregarItem(data.error)
-          if (data.details) agregarItem(data.details)
-          if (data.code) agregarItem(data.code)
+          // El detalle técnico va a la consola, no a la pantalla del usuario
+          console.error(data.details, data.code)
+          mostrarEstado(data.error || 'No se pudo analizar la imagen', { error: true })
         }
       } catch (error) {
         console.error(error)
-        listaEtiquetas.innerHTML = ''
-        agregarItem('Error de conexión')
+        mostrarEstado('Error de conexión', { error: true })
+      } finally {
+        btnEnviar.disabled = false
       }
     })
   </script>
