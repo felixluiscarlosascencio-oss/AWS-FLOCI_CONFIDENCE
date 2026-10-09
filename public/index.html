@@ -3,52 +3,46 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Análisis de imágenes con AWS Rekognition</title>
+  <title>Extracción de texto con AWS Textract</title>
   <link rel="stylesheet" href="estilos.css">
 </head>
 <body>
   <main class="app">
     <header class="app-header">
-      <h1>Análisis de imágenes</h1>
-      <p>Detección de etiquetas con AWS Rekognition</p>
+      <h1>Análisis de Documentos PDF</h1>
+      <p>Detección de texto con AWS Textract (DetectDocumentText)</p>
     </header>
 
     <section class="app-body">
       <form id="uploadForm">
-        <label class="dropzone" id="dropzone" for="imagen">
-          <span class="icono" aria-hidden="true">🖼️</span>
-          <span class="titulo" id="nombreArchivo">Haga clic o arrastre una imagen aquí</span>
-          <span class="ayuda">JPG o PNG</span>
-          <input type="file" name="imagen" id="imagen" accept="image/*" required>
+        <label class="dropzone" id="dropzone" for="documento">
+          <span class="titulo" id="nombreArchivo">Haga clic o arrastre un archivo PDF aquí</span>
+          <span class="ayuda">Formato PDF (Máximo 5 MB)</span>
+          <input type="file" name="documento" id="documento" accept="application/pdf" required>
         </label>
 
-        <img id="vistaPrevia" alt="Vista previa de la imagen seleccionada">
-
-        <button type="submit" class="btn" id="btnEnviar">Analizar imagen</button>
+        <button type="submit" class="btn" id="btnEnviar">Extraer Texto</button>
       </form>
 
       <div class="resultados">
-        <h2>Resultados del análisis</h2>
+        <h2>Texto Extraído</h2>
         <div class="estado" id="estado" role="status" aria-live="polite"></div>
-        <ul class="lista" id="listaEtiquetas"></ul>
+        <ul class="lista" id="listaTexto"></ul>
       </div>
     </section>
   </main>
 
   <script>
     const form = document.getElementById('uploadForm')
-    const inputImagen = document.getElementById('imagen')
+    const inputDoc = document.getElementById('documento')
     const dropzone = document.getElementById('dropzone')
     const nombreArchivo = document.getElementById('nombreArchivo')
-    const vistaPrevia = document.getElementById('vistaPrevia')
     const btnEnviar = document.getElementById('btnEnviar')
     const estado = document.getElementById('estado')
-    const listaEtiquetas = document.getElementById('listaEtiquetas')
+    const listaTexto = document.getElementById('listaTexto')
 
-    const TEXTO_INICIAL = 'Haga clic o arrastre una imagen aquí'
-    let urlPrevia = null
+    const TEXTO_INICIAL = 'Haga clic o arrastre un archivo PDF aquí'
 
-    // Muestra un mensaje de estado (con spinner opcional)
     function mostrarEstado(texto, { cargando = false, error = false } = {}) {
       estado.className = error ? 'estado error' : 'estado'
       estado.textContent = ''
@@ -62,69 +56,38 @@
       estado.appendChild(span)
     }
 
-    // Color de la barra según el nivel de confianza
-    function colorConfianza(valor) {
-      if (valor >= 90) return 'var(--ok)'
-      if (valor >= 80) return 'var(--warn)'
-      return 'var(--error)'
-    }
-
-    // Crea un <li> con nombre, porcentaje y barra
-    function agregarEtiqueta(label) {
-      const confianza = Number(label.Confidence)
-
+    function agregarLineaTexto(texto) {
       const li = document.createElement('li')
       li.className = 'etiqueta'
-
-      const fila = document.createElement('div')
-      fila.className = 'etiqueta-fila'
-
-      const nombre = document.createElement('span')
-      nombre.className = 'etiqueta-nombre'
-      nombre.textContent = label.Name
-
-      const valor = document.createElement('span')
-      valor.className = 'etiqueta-valor'
-      valor.textContent = `${confianza.toFixed(2)}%`
-
-      fila.append(nombre, valor)
-
-      const barra = document.createElement('div')
-      barra.className = 'barra'
-      const relleno = document.createElement('div')
-      relleno.className = 'barra-relleno'
-      relleno.style.background = colorConfianza(confianza)
-      relleno.style.width = '0%'
-      barra.appendChild(relleno)
-
-      li.append(fila, barra)
-      listaEtiquetas.appendChild(li)
-
-      // Anima el ancho en el siguiente cuadro
-      requestAnimationFrame(() => { relleno.style.width = `${confianza}%` })
+      li.textContent = texto
+      listaTexto.appendChild(li)
     }
 
-    // Vista previa y nombre del archivo elegido
     function actualizarArchivo(archivo) {
-      if (urlPrevia) URL.revokeObjectURL(urlPrevia)
-
       if (!archivo) {
         nombreArchivo.textContent = TEXTO_INICIAL
-        vistaPrevia.style.display = 'none'
         return
       }
 
-      urlPrevia = URL.createObjectURL(archivo)
-      vistaPrevia.src = urlPrevia
-      vistaPrevia.style.display = 'block'
+      // Si el archivo supera 5 MB, vaciamos la lista para que NO aparezca el texto extraído previo (floci 99.9%)
+      if (archivo.size > 5 * 1024 * 1024) {
+        listaTexto.innerHTML = ''
+        mostrarEstado('El archivo supera los 5 MB permitidos.', { error: true })
+        inputDoc.value = ''
+        nombreArchivo.textContent = TEXTO_INICIAL
+        return
+      }
+
+      // Si el archivo es válido, se vacía la lista previa y los mensajes de error
+      listaTexto.innerHTML = ''
+      mostrarEstado('')
       nombreArchivo.textContent = archivo.name
     }
 
-    inputImagen.addEventListener('change', () => {
-      actualizarArchivo(inputImagen.files[0])
+    inputDoc.addEventListener('change', () => {
+      actualizarArchivo(inputDoc.files[0])
     })
 
-    // Arrastrar y soltar
     ;['dragenter', 'dragover'].forEach((evento) => {
       dropzone.addEventListener(evento, (e) => {
         e.preventDefault()
@@ -139,20 +102,24 @@
     })
     dropzone.addEventListener('drop', (e) => {
       const archivo = e.dataTransfer.files[0]
-      if (archivo && archivo.type.startsWith('image/')) {
-        inputImagen.files = e.dataTransfer.files
+      if (archivo && archivo.type === 'application/pdf') {
+        inputDoc.files = e.dataTransfer.files
         actualizarArchivo(archivo)
+      } else {
+        listaTexto.innerHTML = ''
+        mostrarEstado('Solo se admiten archivos PDF.', { error: true })
       }
     })
 
     form.addEventListener('submit', async (e) => {
-      e.preventDefault() // Detenemos el envío normal del formulario
+      e.preventDefault()
 
       const formData = new FormData(form)
 
-      listaEtiquetas.innerHTML = ''
+      // Vaciar siempre la lista al iniciar un nuevo envío
+      listaTexto.innerHTML = ''
       btnEnviar.disabled = true
-      mostrarEstado('Analizando imagen con AWS...', { cargando: true })
+      mostrarEstado('Procesando PDF con AWS Textract...', { cargando: true })
 
       try {
         const response = await fetch('/api/analizar', {
@@ -163,20 +130,22 @@
         const data = await response.json()
 
         if (data.success) {
-          if (data.labels.length === 0) {
-            mostrarEstado('No se detectaron etiquetas con la confianza mínima.')
+          if (data.texto.length === 0) {
+            mostrarEstado('No se detectó texto en el PDF.')
             return
           }
-          mostrarEstado(`Se detectaron ${data.labels.length} etiquetas.`)
-          data.labels.forEach(agregarEtiqueta)
+          // Limpia el mensaje de "Procesando..." y deja únicamente las líneas extraídas
+          mostrarEstado('')
+          data.texto.forEach(agregarLineaTexto)
         } else {
-          // El detalle técnico va a la consola, no a la pantalla del usuario
-          console.error(data.details, data.code)
-          mostrarEstado(data.error || 'No se pudo analizar la imagen', { error: true })
+          // Si hay error desde el backend, asegura vaciar la lista
+          listaTexto.innerHTML = ''
+          mostrarEstado(data.error || 'No se pudo analizar el PDF', { error: true })
         }
       } catch (error) {
         console.error(error)
-        mostrarEstado('Error de conexión', { error: true })
+        listaTexto.innerHTML = ''
+        mostrarEstado('Error de conexión con el servidor', { error: true })
       } finally {
         btnEnviar.disabled = false
       }
